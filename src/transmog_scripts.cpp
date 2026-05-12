@@ -799,56 +799,6 @@ private:
         }
     }
 
-    void CheckRetroActiveInventoryAppearances(Player* player)
-    {
-        if (!sT->GetUseCollectionSystem())
-            return;
-
-        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
-        {
-            if (Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-                AddToDatabase(player, item);
-        }
-
-        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
-        {
-            if (Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-                AddToDatabase(player, item);
-        }
-
-        for (uint8 bagPos = INVENTORY_SLOT_BAG_START; bagPos < INVENTORY_SLOT_BAG_END; ++bagPos)
-        {
-            Bag* bag = player->GetBagByPos(bagPos);
-            if (!bag)
-                continue;
-
-            for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
-            {
-                if (Item* item = player->GetItemByPos(bagPos, slot))
-                    AddToDatabase(player, item);
-            }
-        }
-
-        for (uint8 slot = BANK_SLOT_ITEM_START; slot < BANK_SLOT_ITEM_END; ++slot)
-        {
-            if (Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-                AddToDatabase(player, item);
-        }
-
-        for (uint8 bagPos = BANK_SLOT_BAG_START; bagPos < BANK_SLOT_BAG_END; ++bagPos)
-        {
-            Bag* bag = player->GetBagByPos(bagPos);
-            if (!bag)
-                continue;
-
-            for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
-            {
-                if (Item* item = player->GetItemByPos(bagPos, slot))
-                    AddToDatabase(player, item);
-            }
-        }
-    }
-
     void CheckRetroActiveQuestAppearances(Player* player)
     {
         if (!sT->GetUseCollectionSystem())
