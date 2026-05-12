@@ -41,12 +41,13 @@ public:
 
         static ChatCommandTable transmogTable =
         {
-            { "add",       addCollectionTable                                            },
-            { "",          HandleDisableTransMogVisual,   SEC_PLAYER,        Console::No },
-            { "sync",      HandleSyncTransMogCommand,     SEC_PLAYER,        Console::No },
-            { "portable",  HandleTransmogPortableCommand, SEC_PLAYER,        Console::No },
-            { "interface", HandleInterfaceOption,         SEC_PLAYER,        Console::No },
-            { "reload",    HandleReloadTransmogConfig,    SEC_ADMINISTRATOR, Console::Yes}
+            { "add",        addCollectionTable                                            },
+            { "",           HandleDisableTransMogVisual,   SEC_PLAYER,        Console::No },
+            { "sync",       HandleSyncTransMogCommand,     SEC_PLAYER,        Console::No },
+            { "portable",   HandleTransmogPortableCommand, SEC_PLAYER,        Console::No },
+            { "interface",  HandleInterfaceOption,         SEC_PLAYER,        Console::No },
+            { "disclaimer", HandleDisclaimerOption,        SEC_PLAYER,        Console::No },
+            { "reload",     HandleReloadTransmogConfig,    SEC_ADMINISTRATOR, Console::Yes}
         };
 
         static ChatCommandTable commandTable =
@@ -61,12 +62,12 @@ public:
     {
         Player* player = handler->GetPlayer();
         uint32 accountId = player->GetSession()->GetAccountId();
-        handler->SendSysMessage(LANG_CMD_TRANSMOG_BEGIN_SYNC);
-        
+        handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_BEGIN_SYNC);
+
         for (uint32 itemId : sTransmogrification->collectionCache[accountId])
             handler->PSendSysMessage("TRANSMOG_SYNC:{}", itemId);
-        
-        handler->SendSysMessage(LANG_CMD_TRANSMOG_COMPLETE_SYNC);
+
+        handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_COMPLETE_SYNC);
         return true;
     }
 
@@ -77,12 +78,12 @@ public:
         if (hide)
         {
             player->UpdatePlayerSetting("mod-transmog", SETTING_HIDE_TRANSMOG, 0);
-            handler->SendSysMessage(LANG_CMD_TRANSMOG_SHOW);
+            handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_SHOW);
         }
         else
         {
             player->UpdatePlayerSetting("mod-transmog", SETTING_HIDE_TRANSMOG, 1);
-            handler->SendSysMessage(LANG_CMD_TRANSMOG_HIDE);
+            handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_HIDE);
         }
 
         player->UpdateObjectVisibility();
@@ -118,14 +119,14 @@ public:
 
         if (!sTransmogrification->GetTrackUnusableItems() && !suitableForTransmog)
         {
-            handler->SendSysMessage(LANG_CMD_TRANSMOG_ADD_UNSUITABLE);
+            handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_ADD_UNSUITABLE);
             handler->SetSentErrorMessage(true);
             return true;
         }
 
         if (itemTemplate->Class != ITEM_CLASS_ARMOR && itemTemplate->Class != ITEM_CLASS_WEAPON)
         {
-            handler->SendSysMessage(LANG_CMD_TRANSMOG_ADD_FORBIDDEN);
+            handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_ADD_FORBIDDEN);
             handler->SetSentErrorMessage(true);
             return true;
         }
@@ -209,7 +210,7 @@ public:
             return false;
 
         bool added = false;
-        uint32 error = 0;
+        uint32 error = 0; // holds a TransmogStrings id, 0 = no error
         uint32 itemId;
         uint32 accountId = playerData->AccountId;
 
@@ -226,12 +227,12 @@ public:
                             !sTransmogrification->SuitableForTransmogrification(guid, itemTemplate)
                             ))
                     {
-                        error = LANG_CMD_TRANSMOG_ADD_UNSUITABLE;
+                        error = LANG_TRANSMOG_CMD_ADD_UNSUITABLE;
                         continue;
                     }
                     if (itemTemplate->Class != ITEM_CLASS_ARMOR && itemTemplate->Class != ITEM_CLASS_WEAPON)
                     {
-                        error = LANG_CMD_TRANSMOG_ADD_FORBIDDEN;
+                        error = LANG_TRANSMOG_CMD_ADD_FORBIDDEN;
                         continue;
                     }
 
@@ -246,7 +247,7 @@ public:
 
         if (!added && error > 0)
         {
-            handler->SendSysMessage(error);
+            handler->PSendModuleSysMessage("mod-transmog", error);
             handler->SetSentErrorMessage(true);
             return true;
         }
@@ -313,7 +314,23 @@ public:
     static bool HandleInterfaceOption(ChatHandler* handler, bool enable)
     {
         handler->GetPlayer()->UpdatePlayerSetting("mod-transmog", SETTING_VENDOR_INTERFACE, enable);
-        handler->SendSysMessage(enable ? LANG_CMD_TRANSMOG_VENDOR_INTERFACE_ENABLE : LANG_CMD_TRANSMOG_VENDOR_INTERFACE_DISABLE);
+        handler->PSendModuleSysMessage("mod-transmog", enable ? LANG_TRANSMOG_CMD_VENDOR_INTERFACE_ENABLE : LANG_TRANSMOG_CMD_VENDOR_INTERFACE_DISABLE);
+        return true;
+    }
+
+    static bool HandleDisclaimerOption(ChatHandler* handler, bool enable)
+    {
+        Player* player = handler->GetPlayer();
+        if (enable)
+        {
+            player->UpdatePlayerSetting("mod-transmog", SETTING_HIDE_SET_DISCLAIMER, 0);
+            handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_DISCLAIMER_ON);
+        }
+        else
+        {
+            player->UpdatePlayerSetting("mod-transmog", SETTING_HIDE_SET_DISCLAIMER, 1);
+            handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_DISCLAIMER_OFF);
+        }
         return true;
     }
 
