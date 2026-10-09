@@ -191,6 +191,7 @@ public:
     typedef std::unordered_map<ObjectGuid, uint32> transmog2Data;
     typedef std::unordered_map<ObjectGuid, transmog2Data> transmogMap;
     typedef std::unordered_map<uint32, std::unordered_set<uint32>> collectionCacheMap;
+    typedef std::unordered_map<uint32, std::unordered_set<uint64>> appearanceCacheMap;
     typedef std::unordered_map<uint32, std::string> searchStringMap;
     typedef std::unordered_map<uint32, std::vector<uint32>> transmogPlusData;
     typedef std::unordered_map<ObjectGuid, uint8> selectedSlotMap;
@@ -198,7 +199,8 @@ public:
     transmogPlusData plusDataMap;
     transmogMap entryMap; // entryMap[pGUID][iGUID] = entry
     transmogData dataMap; // dataMap[iGUID] = pGUID
-    collectionCacheMap collectionCache;
+    collectionCacheMap collectionCache;  // Account -> collected source ItemIDs
+    appearanceCacheMap appearanceCache;  // Account -> unique visual appearance keys
     selectedSlotMap selectionCache;
 
 #ifdef PRESETS
@@ -305,6 +307,8 @@ public:
     void DeleteFakeEntry(Player* player, uint8 slot, Item* itemTransmogrified, CharacterDatabaseTransaction* trans = nullptr);
     void SetFakeEntry(Player* player, uint32 newEntry, uint8 slot, Item* itemTransmogrified);
     bool AddCollectedAppearance(uint32 accountId, uint32 itemId);
+    uint64 GetAppearanceKey(uint32 itemId) const;
+    bool HasCollectedAppearance(uint32 accountId, uint32 itemId) const;
     // Adds the item's appearance to the player's account collection and, if newly unlocked,
     // notifies the player (LANG_TRANSMOG_ADDED_APPEARANCE). Shared by the auto-collect player
     // script and the `.transmog claim` command.

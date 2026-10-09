@@ -464,17 +464,44 @@ void Transmogrification::SetFakeEntry(Player* player, uint32 newEntry, uint8 /*s
     UpdateItem(player, itemTransmogrified);
 }
 
-bool Transmogrification::AddCollectedAppearance(uint32 accountId, uint32 itemId)
+uint64 Transmogrification::GetAppearanceKey(uint32 itemId) const
 {
-    if (!collectionCache.contains(accountId))
+    if (ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(itemId))
     {
-        collectionCache.insert({ accountId, {itemId} });
-        return true;
+        if (itemTemplate->DisplayInfoID)
+            return uint64(itemTemplate->DisplayInfoID);
     }
 
-    auto res = collectionCache[accountId].insert(itemId);
-    bool inserted = res.second;
-    return inserted;
+    // Keep invalid or zero-display entries separate from real appearances.
+    return (uint64(1) << 32) | uint64(itemId);
+}
+
+bool Transmogrification::HasCollectedAppearance(uint32 accountId, uint32 itemId) const
+{
+    if (!sObjectMgr->GetItemTemplate(itemId))
+        return false;
+
+    auto accountIt = appearanceCache.find(accountId);
+
+    return accountIt != appearanceCache.end() &&
+           accountIt->second.contains(GetAppearanceKey(itemId));
+}
+
+bool Transmogrification::AddCollectedAppearance(uint32 accountId, uint32 itemId)
+{
+    if (!sObjectMgr->GetItemTemplate(itemId))
+        return false;
+
+    // Preserve the exact source ItemID.
+    auto result = collectionCache[accountId].insert(itemId);
+
+    if (!result.second)
+        return false;
+
+    // Also remember its unique visual appearance.
+    appearanceCache[accountId].insert(GetAppearanceKey(itemId));
+
+    return true;
 }
 
 void Transmogrification::AddToDatabase(Player* player, ItemTemplate const* itemTemplate)
@@ -497,12 +524,17 @@ void Transmogrification::AddToDatabase(Player* player, ItemTemplate const* itemT
     std::stringstream tempStream;
     tempStream << std::hex << ItemQualityColors[itemTemplate->Quality];
     std::string itemQuality = tempStream.str();
+
     bool showChatMessage = !(player->GetPlayerSetting("mod-transmog", SETTING_HIDE_TRANSMOG).value) && !CanNeverTransmog(itemTemplate);
+    bool alreadyOwnedAppearance = HasCollectedAppearance(accountId, itemId);
+
     if (AddCollectedAppearance(accountId, itemId))
     {
-        if (showChatMessage)
+        // Only announce a genuinely new visual appearance.
+        if (showChatMessage && !alreadyOwnedAppearance)
             ChatHandler(session).PSendSysMessage(R"(|c{}|Hitem:{}:0:0:0:0:0:0:0:0|h[{}]|h|r {})", itemQuality, itemId, itemName, *session->GetModuleString("mod-transmog", LANG_TRANSMOG_ADDED_APPEARANCE));
 
+        // Still save every legitimately acquired source ItemID.
         CharacterDatabase.Execute("INSERT INTO custom_unlocked_appearances (account_id, item_template_id) VALUES ({}, {})", accountId, itemId);
     }
 }
@@ -1285,21 +1317,33 @@ void Transmogrification::LoadCollections()
     if (sTransmogrification->GetUseCollectionSystem())
     {
         LOG_INFO("module", "Loading transmog appearance collection cache....");
-        uint32 collectedAppearanceCount = 0;
+
+        collectionCache.clear();
+        appearanceCache.clear();
+
+        uint32 collectedSourceCount = 0;
+
         QueryResult result = CharacterDatabase.Query("SELECT account_id, item_template_id FROM custom_unlocked_appearances");
+
         if (result)
         {
             do
             {
                 uint32 accountId = (*result)[0].Get<uint32>();
                 uint32 itemId = (*result)[1].Get<uint32>();
-                if (sTransmogrification->AddCollectedAppearance(accountId, itemId))
-                    collectedAppearanceCount++;
+
+                if (AddCollectedAppearance(accountId, itemId))
+                    ++collectedSourceCount;
 
             } while (result->NextRow());
         }
 
-        LOG_INFO("module", "Loaded {} collected appearances into cache", collectedAppearanceCount);
+        uint32 collectedAppearanceCount = 0;
+
+        for (auto const& account : appearanceCache)
+            collectedAppearanceCount += uint32(account.second.size());
+
+        LOG_INFO("module", "Loaded {} collected source items representing {} unique appearances", collectedSourceCount, collectedAppearanceCount);
     }
 }
 

@@ -58,10 +58,16 @@ bool ValidForTransmog (Player* player, Item* target, Item* source, bool hasSearc
 
     if (!sT->CanTransmogrifyItemWithItem(player, targetTemplate, sourceTemplate))
         return false;
-    if (sT->GetFakeEntry(target->GetGUID()) == source->GetEntry())
-        return false;
+
+    if (uint32 fakeEntry = sT->GetFakeEntry(target->GetGUID()))
+    {
+        if (sT->GetAppearanceKey(fakeEntry) == sT->GetAppearanceKey(source->GetEntry()))
+            return false;
+    }
+
     if (hasSearch && sourceTemplate->Name1.find(searchTerm) == std::string::npos)
         return false;
+
     return true;
 }
 
@@ -89,9 +95,13 @@ std::vector<Item*> GetValidTransmogs (Player* player, Item* target, bool hasSear
         {
             if (!sObjectMgr->GetItemTemplate(itemId))
                 continue;
+
             Item* srcItem = Item::CreateItem(itemId, 1, 0);
+
             if (ValidForTransmog(player, target, srcItem, hasSearch, searchTerm))
                 allowedItems.push_back(srcItem);
+            else
+                delete srcItem;
         }
     }
     else
@@ -116,8 +126,36 @@ std::vector<Item*> GetValidTransmogs (Player* player, Item* target, bool hasSear
         }
     }
 
-    if (sConfigMgr->GetOption<bool>("Transmogrification.EnableSortByQualityAndName", true)) {
+    if (sConfigMgr->GetOption<bool>("Transmogrification.EnableSortByQualityAndName", true))
+    {
         sort(allowedItems.begin(), allowedItems.end(), CmpTmog);
+    }
+
+    // Show each visual appearance only once in collection mode.
+    // Compatibility and search filtering have already been applied.
+    if (sT->GetUseCollectionSystem())
+    {
+        std::unordered_set<uint64> seenAppearances;
+        std::vector<Item*> uniqueItems;
+
+        uniqueItems.reserve(allowedItems.size());
+
+        for (Item* item : allowedItems)
+        {
+            uint64 appearanceKey = sT->GetAppearanceKey(item->GetEntry());
+
+            if (seenAppearances.insert(appearanceKey).second)
+            {
+                uniqueItems.push_back(item);
+            }
+            else
+            {
+                // Collection-mode entries are temporary items created above.
+                delete item;
+            }
+        }
+
+        allowedItems.swap(uniqueItems);
     }
 
     return allowedItems;
@@ -583,6 +621,14 @@ public:
 
             AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, "|TInterface/ICONS/INV_Enchant_Disenchant:30:30:-18:0|t" + Tstr(session, LANG_TRANSMOG_REMOVETRANSMOG), EQUIPMENT_SLOT_END + 3, slot, Tstr(session, LANG_TRANSMOG_REMOVETRANSMOG_SLOT), 0, false);
             AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, "|TInterface/PaperDollInfoFrame/UI-GearManager-Undo:30:30:-18:0|t" + Tstr(session, LANG_TRANSMOG_UPDATEMENU), EQUIPMENT_SLOT_END, slot);
+
+            // Collection-mode items are temporary objects created for the menu.
+            // All menu entries have been built, so release the remaining objects.
+            if (sT->GetUseCollectionSystem())
+            {
+                for (Item* item : allowedItems)
+                    delete item;
+            }
         }
         AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, "|TInterface/ICONS/Ability_Spy:30:30:-18:0|t" + Tstr(session, LANG_TRANSMOG_BACK), EQUIPMENT_SLOT_END + 1, 0);
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
@@ -684,6 +730,13 @@ public:
 
         data.put(count_pos, count);
         player->GetSession()->SendPacket(&data);
+
+        // Release temporary collection items after building the vendor packet.
+        if (sT->GetUseCollectionSystem())
+        {
+            for (Item* item : itemList)
+                delete item;
+        }
     }
 };
 
@@ -715,10 +768,9 @@ private:
                 return;
 
             uint32 accountId = player->GetSession()->GetAccountId();
-            auto accountIt = sT->collectionCache.find(accountId);
 
-            // Do not bind an item if its appearance is already collected.
-            if (accountIt != sT->collectionCache.end() && accountIt->second.contains(itemTemplate->ItemId))
+            // Do not bind an item if its visual appearance is already owned.
+            if (sT->HasCollectedAppearance(accountId, itemTemplate->ItemId))
                 return;
 
             // Claim the appearance by binding the physical item.
@@ -761,10 +813,9 @@ private:
                         return;
 
                     uint32 accountId = player->GetSession()->GetAccountId();
-                    auto accountIt = sT->collectionCache.find(accountId);
 
-                    // The appearance is already owned, so leave this copy unbound.
-                    if (accountIt != sT->collectionCache.end() && accountIt->second.contains(itemTemplate->ItemId))
+                    // An already-owned visual does not require binding another copy.
+                    if (sT->HasCollectedAppearance(accountId, itemTemplate->ItemId))
                         return;
 
                     // Claim the new appearance by binding the physical item.

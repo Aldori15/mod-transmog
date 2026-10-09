@@ -153,15 +153,19 @@ public:
         std::string playerName = player->GetName();
         std::string nameLink = handler->playerLink(playerName);
 
+        bool alreadyOwnedAppearance = sTransmogrification->HasCollectedAppearance(accountId, itemId);
         if (sTransmogrification->AddCollectedAppearance(accountId, itemId))
         {
-            // Notify target of new item in appearance collection
-            if (target && !(target->GetPlayerSetting("mod-transmog", SETTING_HIDE_TRANSMOG).value) && !sTransmogrification->CanNeverTransmog(itemTemplate))
-                ChatHandler(target->GetSession()).PSendSysMessage(R"(|c{}|Hitem:{}:0:0:0:0:0:0:0:0|h[{}]|h|r has been added to your appearance collection.)", itemQuality.c_str(), itemId, itemName.c_str());
+            if (!alreadyOwnedAppearance)
+            {
+                // Notify target of new item in appearance collection
+                if (target && !(target->GetPlayerSetting("mod-transmog", SETTING_HIDE_TRANSMOG).value) && !sTransmogrification->CanNeverTransmog(itemTemplate))
+                    ChatHandler(target->GetSession()).PSendSysMessage(R"(|c{}|Hitem:{}:0:0:0:0:0:0:0:0|h[{}]|h|r has been added to your appearance collection.)", itemQuality.c_str(), itemId, itemName.c_str());
 
-            // Feedback of successful command execution to GM
-            if (isNotConsole && target != handler->GetPlayer())
-                handler->PSendSysMessage(R"(|c{}|Hitem:{}:0:0:0:0:0:0:0:0|h[{}]|h|r has been added to the appearance collection of Player {}.)", itemQuality.c_str(), itemId, itemName.c_str(), nameLink);
+                // Feedback of successful command execution to GM
+                if (isNotConsole && target != handler->GetPlayer())
+                    handler->PSendSysMessage(R"(|c{}|Hitem:{}:0:0:0:0:0:0:0:0|h[{}]|h|r has been added to the appearance collection of Player {}.)", itemQuality.c_str(), itemId, itemName.c_str(), nameLink);
+            }
 
             CharacterDatabase.Execute("INSERT INTO custom_unlocked_appearances (account_id, item_template_id) VALUES ({}, {})", accountId, itemId);
         }
@@ -333,8 +337,7 @@ public:
             return ClaimResult::Unsuitable;
 
         uint32 accountId = player->GetSession()->GetAccountId();
-        auto accIt = sTransmogrification->collectionCache.find(accountId);
-        if (accIt != sTransmogrification->collectionCache.end() && accIt->second.contains(itemTemplate->ItemId))
+        if (sTransmogrification->HasCollectedAppearance(accountId, itemTemplate->ItemId))
             return ClaimResult::AlreadyOwned;
 
         // Claim the physical item: bind it to the player and drop the refundable/BoP-tradeable flags
