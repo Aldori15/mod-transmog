@@ -67,7 +67,9 @@ public:
         uint32 accountId = player->GetSession()->GetAccountId();
         handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_BEGIN_SYNC);
 
-        for (uint32 itemId : sTransmogrification->collectionCache[accountId])
+        auto collected = sTransmogrification->GetCollectedSources(accountId);
+
+        for (uint32 itemId : collected)
             handler->PSendSysMessage("TRANSMOG_SYNC:{}", itemId);
 
         handler->PSendModuleSysMessage("mod-transmog", LANG_TRANSMOG_CMD_COMPLETE_SYNC);
@@ -781,8 +783,7 @@ public:
         else
         {
             uint32 accountId = sCharacterCache->GetCharacterAccountIdByGuid(playerGuid);
-            auto const& collCache = sTransmogrification->collectionCache[accountId];
-            bool inCollection = collCache.find(srcItem->ItemId) != collCache.end();
+            bool inCollection = sTransmogrification->HasCollectedSource(accountId, srcItem->ItemId);
             collOk = inCollection;
             collLine += inCollection
                 ? "[+] " + okMsg

@@ -44,50 +44,70 @@ void Transmogrification::LoadPlayerSets(ObjectGuid pGUID)
 {
     LOG_DEBUG("module", "Transmogrification::LoadPlayerSets");
 
-    for (presetData::iterator it = presetById[pGUID].begin(); it != presetById[pGUID].end(); ++it)
-        it->second.clear();
+    presetData loadedPresets;
+    presetIdMap loadedNames;
+    std::vector<uint8> emptyPresets;
 
-    presetById[pGUID].clear();
+    // Load and validate without holding the mutex.
+    QueryResult result = CharacterDatabase.Query("SELECT `PresetID`, `SetName`, `SetData` " "FROM `custom_transmogrification_sets` WHERE Owner = {}", pGUID.GetCounter());
 
-    presetByName[pGUID].clear();
-
-    QueryResult result = CharacterDatabase.Query("SELECT `PresetID`, `SetName`, `SetData` FROM `custom_transmogrification_sets` WHERE Owner = {}", pGUID.GetCounter());
     if (result)
     {
         do
         {
-            uint8 PresetID = (*result)[0].Get<uint8>();
-            std::string SetName = (*result)[1].Get<std::string>();
-            std::istringstream SetData((*result)[2].Get<std::string>());
-            while (SetData.good())
+            uint8 presetID = (*result)[0].Get<uint8>();
+            std::string setName = (*result)[1].Get<std::string>();
+            std::istringstream setData((*result)[2].Get<std::string>());
+
+            slotMap items;
+
+            uint32 slot;
+            uint32 entry;
+
+            while (setData >> slot >> entry)
             {
-                uint32 slot;
-                uint32 entry;
-                SetData >> slot >> entry;
-                if (SetData.fail())
-                    break;
                 if (slot >= EQUIPMENT_SLOT_END)
                 {
-                    LOG_ERROR("module", "Item entry (FakeEntry: {}, player: {}, slot: {}, presetId: {}) has invalid slot, ignoring.", entry, pGUID.ToString(), slot, PresetID);
+                    LOG_ERROR("module", "Item entry (FakeEntry: {}, player: {}, slot: {}, presetId: {}) has invalid slot, ignoring.", entry, pGUID.ToString(), slot, presetID);
                     continue;
                 }
+
                 if (entry == HIDDEN_ITEM_ID || sObjectMgr->GetItemTemplate(entry))
-                    presetById[pGUID][PresetID][slot] = entry; // Transmogrification::Preset(presetName, fakeEntry);
+                    items[uint8(slot)] = entry;
             }
 
-            if (!presetById[pGUID][PresetID].empty())
+            if (!items.empty())
             {
-                presetByName[pGUID][PresetID] = SetName;
-                // load all presets anyways
-                //if (presetByName[pGUID].size() >= GetMaxSets())
-                //    break;
+                loadedPresets[presetID] = std::move(items);
+                loadedNames[presetID] = std::move(setName);
             }
-            else // should be deleted on startup, so  this never runs (shouldnt..)
+            else
             {
-                presetById[pGUID].erase(PresetID);
-                CharacterDatabase.Execute("DELETE FROM `custom_transmogrification_sets` WHERE Owner = {} AND PresetID = {}", pGUID.GetCounter(), PresetID);
+                emptyPresets.push_back(presetID);
             }
+
         } while (result->NextRow());
+    }
+
+    // Publish the complete set of presets atomically.
+    {
+        std::lock_guard<std::mutex> lock(presetMutex);
+
+        if (loadedPresets.empty())
+            presetById.erase(pGUID);
+        else
+            presetById[pGUID] = std::move(loadedPresets);
+
+        if (loadedNames.empty())
+            presetByName.erase(pGUID);
+        else
+            presetByName[pGUID] = std::move(loadedNames);
+    }
+
+    // Database cleanup happens outside the lock.
+    for (uint8 presetID : emptyPresets)
+    {
+        CharacterDatabase.Execute("DELETE FROM `custom_transmogrification_sets` " "WHERE Owner = {} AND PresetID = {}", pGUID.GetCounter(), presetID);
     }
 }
 
@@ -110,11 +130,77 @@ int32 Transmogrification::GetSetCopperCost() const
 
 void Transmogrification::UnloadPlayerSets(ObjectGuid pGUID)
 {
-    for (presetData::iterator it = presetById[pGUID].begin(); it != presetById[pGUID].end(); ++it)
-        it->second.clear();
-    presetById[pGUID].clear();
+    std::lock_guard<std::mutex> lock(presetMutex);
 
-    presetByName[pGUID].clear();
+    presetById.erase(pGUID);
+    presetByName.erase(pGUID);
+}
+
+Transmogrification::presetIdMap
+Transmogrification::GetPresetNames(ObjectGuid playerGUID) const
+{
+    std::lock_guard<std::mutex> lock(presetMutex);
+
+    auto it = presetByName.find(playerGUID);
+
+    if (it == presetByName.end())
+        return {};
+
+    return it->second;
+}
+
+Transmogrification::slotMap
+Transmogrification::GetPresetItems(ObjectGuid playerGUID, uint8 presetID) const
+{
+    std::lock_guard<std::mutex> lock(presetMutex);
+
+    auto playerIt = presetById.find(playerGUID);
+    if (playerIt == presetById.end())
+        return {};
+
+    auto presetIt = playerIt->second.find(presetID);
+    if (presetIt == playerIt->second.end())
+        return {};
+
+    return presetIt->second;
+}
+
+bool Transmogrification::AddPreset(ObjectGuid playerGUID, uint8 presetID, slotMap const& items, std::string const& name)
+{
+    std::lock_guard<std::mutex> lock(presetMutex);
+
+    auto& names = presetByName[playerGUID];
+
+    if (names.contains(presetID))
+        return false;
+
+    presetById[playerGUID][presetID] = items;
+    names[presetID] = name;
+
+    return true;
+}
+
+void Transmogrification::RemovePreset(ObjectGuid playerGUID, uint8 presetID)
+{
+    std::lock_guard<std::mutex> lock(presetMutex);
+
+    auto itemsIt = presetById.find(playerGUID);
+    if (itemsIt != presetById.end())
+    {
+        itemsIt->second.erase(presetID);
+
+        if (itemsIt->second.empty())
+            presetById.erase(itemsIt);
+    }
+
+    auto namesIt = presetByName.find(playerGUID);
+    if (namesIt != presetByName.end())
+    {
+        namesIt->second.erase(presetID);
+
+        if (namesIt->second.empty())
+            presetByName.erase(namesIt);
+    }
 }
 #endif
 
@@ -425,6 +511,8 @@ std::string Transmogrification::GetItemLink(uint32 entry, WorldSession* session)
 uint32 Transmogrification::GetFakeEntry(ObjectGuid itemGUID) const
 {
     LOG_DEBUG("module", "Transmogrification::GetFakeEntry");
+    
+    std::shared_lock<std::shared_mutex> lock(transmogMutex);
 
     transmogData::const_iterator itr = dataMap.find(itemGUID);
     if (itr == dataMap.end()) return 0;
@@ -458,8 +546,13 @@ void Transmogrification::DeleteFakeEntry(Player* player, uint8 /*slot*/, Item* i
 void Transmogrification::SetFakeEntry(Player* player, uint32 newEntry, uint8 /*slot*/, Item* itemTransmogrified)
 {
     ObjectGuid itemGUID = itemTransmogrified->GetGUID();
-    entryMap[player->GetGUID()][itemGUID] = newEntry;
-    dataMap[itemGUID] = player->GetGUID();
+
+    {
+        std::unique_lock<std::shared_mutex> lock(transmogMutex);
+        entryMap[player->GetGUID()][itemGUID] = newEntry;
+        dataMap[itemGUID] = player->GetGUID();
+    }
+
     CharacterDatabase.Execute("REPLACE INTO custom_transmogrification (GUID, FakeEntry, Owner) VALUES ({}, {}, {})", itemGUID.GetCounter(), newEntry, player->GetGUID().GetCounter());
     UpdateItem(player, itemTransmogrified);
 }
@@ -481,10 +574,13 @@ bool Transmogrification::HasCollectedAppearance(uint32 accountId, uint32 itemId)
     if (!sObjectMgr->GetItemTemplate(itemId))
         return false;
 
+    uint64 appearanceKey = GetAppearanceKey(itemId);
+
+    std::shared_lock<std::shared_mutex> lock(transmogMutex);
+
     auto accountIt = appearanceCache.find(accountId);
 
-    return accountIt != appearanceCache.end() &&
-           accountIt->second.contains(GetAppearanceKey(itemId));
+    return accountIt != appearanceCache.end() && accountIt->second.contains(appearanceKey);
 }
 
 bool Transmogrification::AddCollectedAppearance(uint32 accountId, uint32 itemId)
@@ -492,16 +588,54 @@ bool Transmogrification::AddCollectedAppearance(uint32 accountId, uint32 itemId)
     if (!sObjectMgr->GetItemTemplate(itemId))
         return false;
 
-    // Preserve the exact source ItemID.
+    uint64 appearanceKey = GetAppearanceKey(itemId);
+
+    std::unique_lock<std::shared_mutex> lock(transmogMutex);
+
     auto result = collectionCache[accountId].insert(itemId);
 
     if (!result.second)
         return false;
 
-    // Also remember its unique visual appearance.
-    appearanceCache[accountId].insert(GetAppearanceKey(itemId));
+    appearanceCache[accountId].insert(appearanceKey);
 
     return true;
+}
+
+bool Transmogrification::HasCollectedSource(uint32 accountId, uint32 itemId) const
+{
+    std::shared_lock<std::shared_mutex> lock(transmogMutex);
+
+    auto accountIt = collectionCache.find(accountId);
+
+    return accountIt != collectionCache.end() && accountIt->second.contains(itemId);
+}
+
+std::unordered_set<uint32> Transmogrification::GetCollectedSources(uint32 accountId) const
+{
+    std::shared_lock<std::shared_mutex> lock(transmogMutex);
+
+    auto accountIt = collectionCache.find(accountId);
+
+    if (accountIt == collectionCache.end())
+        return {};
+
+    return accountIt->second;
+}
+
+uint8 Transmogrification::GetSelectedSlot(ObjectGuid playerGUID) const
+{
+    std::shared_lock<std::shared_mutex> lock(transmogMutex);
+
+    auto it = selectionCache.find(playerGUID);
+    return it != selectionCache.end() ? it->second : 0;
+}
+
+void Transmogrification::SetSelectedSlot(ObjectGuid playerGUID, uint8 slot)
+{
+    std::unique_lock<std::shared_mutex> lock(transmogMutex);
+
+    selectionCache[playerGUID] = slot;
 }
 
 void Transmogrification::AddToDatabase(Player* player, ItemTemplate const* itemTemplate)
@@ -1268,12 +1402,26 @@ void Transmogrification::DeleteFakeFromDB(ObjectGuid::LowType itemLowGuid, Chara
 {
     ObjectGuid itemGUID = ObjectGuid::Create<HighGuid::Item>(itemLowGuid);
 
-    if (dataMap.find(itemGUID) != dataMap.end())
     {
-        if (entryMap.find(dataMap[itemGUID]) != entryMap.end())
-            entryMap[dataMap[itemGUID]].erase(itemGUID);
-        dataMap.erase(itemGUID);
+        std::unique_lock<std::shared_mutex> lock(transmogMutex);
+
+        auto ownerIt = dataMap.find(itemGUID);
+        if (ownerIt != dataMap.end())
+        {
+            auto entryIt = entryMap.find(ownerIt->second);
+
+            if (entryIt != entryMap.end())
+            {
+                entryIt->second.erase(itemGUID);
+
+                if (entryIt->second.empty())
+                    entryMap.erase(entryIt);
+            }
+
+            dataMap.erase(ownerIt);
+        }
     }
+
     if (trans)
         (*trans)->Append("DELETE FROM custom_transmogrification WHERE GUID = {}", itemLowGuid);
     else
@@ -1314,37 +1462,51 @@ bool Transmogrification::IsPlusFeatureEligible(ObjectGuid const &playerGuid, uin
 
 void Transmogrification::LoadCollections()
 {
-    if (sTransmogrification->GetUseCollectionSystem())
+    if (!GetUseCollectionSystem())
+        return;
+
+    LOG_INFO("module", "Loading transmog appearance collection cache....");
+
+    collectionCacheMap loadedSources;
+    appearanceCacheMap loadedAppearances;
+
+    uint32 collectedSourceCount = 0;
+
+    QueryResult result = CharacterDatabase.Query("SELECT account_id, item_template_id FROM custom_unlocked_appearances");
+
+    if (result)
     {
-        LOG_INFO("module", "Loading transmog appearance collection cache....");
-
-        collectionCache.clear();
-        appearanceCache.clear();
-
-        uint32 collectedSourceCount = 0;
-
-        QueryResult result = CharacterDatabase.Query("SELECT account_id, item_template_id FROM custom_unlocked_appearances");
-
-        if (result)
+        do
         {
-            do
+            uint32 accountId = (*result)[0].Get<uint32>();
+            uint32 itemId = (*result)[1].Get<uint32>();
+
+            if (!sObjectMgr->GetItemTemplate(itemId))
+                continue;
+
+            if (loadedSources[accountId].insert(itemId).second)
             {
-                uint32 accountId = (*result)[0].Get<uint32>();
-                uint32 itemId = (*result)[1].Get<uint32>();
+                loadedAppearances[accountId].insert(GetAppearanceKey(itemId));
+                ++collectedSourceCount;
+            }
 
-                if (AddCollectedAppearance(accountId, itemId))
-                    ++collectedSourceCount;
-
-            } while (result->NextRow());
-        }
-
-        uint32 collectedAppearanceCount = 0;
-
-        for (auto const& account : appearanceCache)
-            collectedAppearanceCount += uint32(account.second.size());
-
-        LOG_INFO("module", "Loaded {} collected source items representing {} unique appearances", collectedSourceCount, collectedAppearanceCount);
+        } while (result->NextRow());
     }
+
+    uint32 collectedAppearanceCount = 0;
+
+    for (auto const& account : loadedAppearances)
+        collectedAppearanceCount += uint32(account.second.size());
+
+    // Replace both caches together, after completing the database query.
+    {
+        std::unique_lock<std::shared_mutex> lock(transmogMutex);
+
+        collectionCache.swap(loadedSources);
+        appearanceCache.swap(loadedAppearances);
+    }
+
+    LOG_INFO("module", "Loaded {} collected source items representing {} unique appearances", collectedSourceCount, collectedAppearanceCount);
 }
 
 bool Transmogrification::GetEnableTransmogInfo() const

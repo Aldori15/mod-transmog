@@ -15,6 +15,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <mutex>
+#include <shared_mutex>
+#include <utility>
 
 #define PRESETS // comment this line to disable preset feature totally
 #define HIDDEN_ITEM_ID 1 // used for hidden transmog - do not use a valid equipment ID
@@ -202,6 +205,7 @@ public:
     collectionCacheMap collectionCache;  // Account -> collected source ItemIDs
     appearanceCacheMap appearanceCache;  // Account -> unique visual appearance keys
     selectedSlotMap selectionCache;
+    mutable std::shared_mutex transmogMutex;
 
 #ifdef PRESETS
     bool EnableSetInfo;
@@ -214,6 +218,7 @@ public:
     typedef std::map<uint8, std::string> presetIdMap;
     typedef std::unordered_map<ObjectGuid, presetIdMap> presetNameMap;
     presetNameMap presetByName; // presetByName[pGUID][presetID] = presetName
+    mutable std::mutex presetMutex;
     searchStringMap searchStringByPlayer;
 
     void PresetTransmog(Player* player, Item* itemTransmogrified, uint32 fakeEntry, uint8 slot);
@@ -230,6 +235,12 @@ public:
 
     void LoadPlayerSets(ObjectGuid pGUID);
     void UnloadPlayerSets(ObjectGuid pGUID);
+
+    presetIdMap GetPresetNames(ObjectGuid playerGUID) const;
+    slotMap GetPresetItems(ObjectGuid playerGUID, uint8 presetID) const;
+    bool AddPreset(ObjectGuid playerGUID, uint8 presetID, slotMap const& items, std::string const& name);
+    void RemovePreset(ObjectGuid playerGUID, uint8 presetID);
+
     void LoadCollections();
 #endif
 
@@ -307,6 +318,10 @@ public:
     void DeleteFakeEntry(Player* player, uint8 slot, Item* itemTransmogrified, CharacterDatabaseTransaction* trans = nullptr);
     void SetFakeEntry(Player* player, uint32 newEntry, uint8 slot, Item* itemTransmogrified);
     bool AddCollectedAppearance(uint32 accountId, uint32 itemId);
+    bool HasCollectedSource(uint32 accountId, uint32 itemId) const;
+    std::unordered_set<uint32> GetCollectedSources(uint32 accountId) const;
+    uint8 GetSelectedSlot(ObjectGuid playerGUID) const;
+    void SetSelectedSlot(ObjectGuid playerGUID, uint8 slot);
     uint64 GetAppearanceKey(uint32 itemId) const;
     bool HasCollectedAppearance(uint32 accountId, uint32 itemId) const;
     // Adds the item's appearance to the player's account collection and, if newly unlocked,
