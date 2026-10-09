@@ -690,6 +690,9 @@ public:
 class PS_Transmogrification : public PlayerScript
 {
 private:
+    // Prevent collecting vendor purchases before core sets the refundable flag.
+    static inline thread_local ObjectGuid _purchasingPlayer;
+
     void AddToDatabase(Player* player, Item* item, bool fromVendorSell = false)
     {
         if (!item)
@@ -702,16 +705,43 @@ private:
         if (item->HasFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_REFUNDABLE))
             return;
 
-        if (!fromVendorSell)
+        if (fromVendorSell)
         {
-            if (item->HasFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_BOP_TRADEABLE) && !sTransmogrification->GetAllowTradeable())
+            // Only claim eligible armor and weapon appearances.
+            if (itemTemplate->Class != ITEM_CLASS_ARMOR && itemTemplate->Class != ITEM_CLASS_WEAPON)
+                return;
+
+            if (!sT->GetTrackUnusableItems() && !sT->SuitableForTransmogrification(player, itemTemplate))
+                return;
+
+            uint32 accountId = player->GetSession()->GetAccountId();
+            auto accountIt = sT->collectionCache.find(accountId);
+
+            // Do not bind an item if its appearance is already collected.
+            if (accountIt != sT->collectionCache.end() && accountIt->second.contains(itemTemplate->ItemId))
+                return;
+
+            // Claim the appearance by binding the physical item.
+            // Prevents selling, buying back and trading it to another account.
+            item->SetOwnerGUID(player->GetGUID());
+            item->SetNotRefundable(player);
+
+            if (!sT->GetAllowTradeable())
+                item->ClearSoulboundTradeable(player);
+
+            item->SetBinding(true);
+            item->SetState(ITEM_CHANGED, player);
+        }
+        else
+        {
+            if (item->HasFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_BOP_TRADEABLE) && !sT->GetAllowTradeable())
                 return;
 
             if (!item->IsSoulBound())
             {
                 ItemBondingType bonding = static_cast<ItemBondingType>(itemTemplate->Bonding);
 
-                // BOE/BWU blocked on acquire (learn on equip or vendor-sell)
+                // BoE/BwU items must be equipped, used or vendor-claimed.
                 if (bonding == ItemBondingType::BIND_WHEN_EQUIPPED ||
                     bonding == ItemBondingType::BIND_WHEN_USE)
                     return;
@@ -795,9 +825,9 @@ private:
 public:
     PS_Transmogrification() : PlayerScript("Player_Transmogrify", {
         PLAYERHOOK_ON_EQUIP,
-        PLAYERHOOK_ON_LOOT_ITEM,
         PLAYERHOOK_ON_STORE_NEW_ITEM,
         PLAYERHOOK_ON_CREATE_ITEM,
+        PLAYERHOOK_ON_BEFORE_STORE_OR_EQUIP_NEW_ITEM,
         PLAYERHOOK_ON_AFTER_STORE_OR_EQUIP_NEW_ITEM,
         PLAYERHOOK_ON_PLAYER_COMPLETE_QUEST,
         PLAYERHOOK_ON_AFTER_SET_VISIBLE_ITEM_SLOT,
@@ -810,23 +840,15 @@ public:
 
     void OnPlayerEquip(Player* player, Item* it, uint8 /*bag*/, uint8 /*slot*/, bool /*update*/) override
     {
-        if (!sT->GetUseCollectionSystem())
+        if (!sT->GetUseCollectionSystem() || !it || player->GetGUID() == _purchasingPlayer)
             return;
 
         AddToDatabase(player, it);
     }
 
-    void OnPlayerLootItem(Player* player, Item* item, uint32 /*count*/, ObjectGuid /*lootguid*/) override
-    {
-        if (!sT->GetUseCollectionSystem() || !item || typeid(*item) != typeid(Item))
-            return;
-
-        AddToDatabase(player, item);
-    }
-
     void OnPlayerStoreNewItem(Player* player, Item* item, uint32 /*count*/) override
     {
-        if (!sT->GetUseCollectionSystem() || !item)
+        if (!sT->GetUseCollectionSystem() || !item || player->GetGUID() == _purchasingPlayer)
             return;
 
         AddToDatabase(player, item);
@@ -834,14 +856,21 @@ public:
 
     void OnPlayerCreateItem(Player* player, Item* item, uint32 /*count*/) override
     {
-        if (!sT->GetUseCollectionSystem() || !item)
+        if (!sT->GetUseCollectionSystem() || !item || player->GetGUID() == _purchasingPlayer)
             return;
 
         AddToDatabase(player, item);
     }
 
+    void OnPlayerBeforeStoreOrEquipNewItem(Player* player, uint32 /*vendorslot*/, uint32& /*item*/, uint8 /*count*/, uint8 /*bag*/, uint8 /*slot*/, ItemTemplate const* /*pProto*/, Creature* /*pVendor*/, VendorItem const* /*crItem*/, bool /*bStore*/) override
+    {
+        _purchasingPlayer = player->GetGUID();
+    }
+
     void OnPlayerAfterStoreOrEquipNewItem(Player* player, uint32 /*vendorslot*/, Item* item, uint8 /*count*/, uint8 /*bag*/, uint8 /*slot*/, ItemTemplate const* /*pProto*/, Creature* /*pVendor*/, VendorItem const* /*crItem*/, bool /*bStore*/) override
     {
+        _purchasingPlayer.Clear();
+
         if (!sT->GetUseCollectionSystem() || !item)
             return;
 
@@ -850,8 +879,19 @@ public:
 
     bool OnPlayerCanSellItem(Player* player, Item* item, Creature* /*creature*/) override
     {
-        if (sT->GetUseCollectionSystem() && item)
-            AddToDatabase(player, item, true);
+        if (!sT->GetUseCollectionSystem() || !item)
+            return true;
+
+        ItemTemplate const* itemTemplate = item->GetTemplate();
+        if (!itemTemplate || itemTemplate->SellPrice == 0)
+            return true;
+
+        // Avoid claiming items that fail common core sale requirements.
+        if (item->GetOwnerGUID() != player->GetGUID() || item->IsNotEmptyBag() ||
+            player->GetLootGUID() == item->GetGUID())
+            return true;
+
+        AddToDatabase(player, item, true);
 
         return true;
     }
