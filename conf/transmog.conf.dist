@@ -52,6 +52,13 @@
 #                     Occurs only once per player.
 #        Default:    1
 #
+#    Transmogrification.CollectPoorItemsOnPickup
+#        Description: If enabled, poor (grey) items are collected when they are looted or otherwise created in bags.
+#                     Newly collected grey BoE/BwU items become soulbound if their appearance is not already owned.
+#                     Useful with modules such as mod-junk-to-gold.
+#                     If disabled, existing collection behavior is preserved.
+#        Default:     0
+#
 #    Transmogrification.ResetRetroActiveAppearancesFlag
 #        Description: Resets the flag indicating whether the retroactive appearance check has been run.
 #                     Occurs for each character on log in.
@@ -91,6 +98,7 @@ Transmogrification.UseVendorInterface = 0
 Transmogrification.AllowHiddenTransmog = 1
 Transmogrification.HiddenTransmogIsFree = 1
 Transmogrification.TrackUnusableItems = 1
+Transmogrification.CollectPoorItemsOnPickup = 0
 Transmogrification.RetroActiveAppearances = 1
 Transmogrification.ResetRetroActiveAppearancesFlag = 0
 
