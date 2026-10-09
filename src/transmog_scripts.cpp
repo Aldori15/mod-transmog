@@ -782,6 +782,17 @@ private:
         sT->AddToDatabase(player, itemTemplate);
     }
 
+    // Rebuild all visible slots from actual equipment. AzerothCore clears empty
+    // slots and restores real items; the visible-slot hook reapplies transmog.
+    void RefreshVisibleEquipment(Player* player)
+    {
+        if (!player)
+            return;
+
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+            player->SetVisibleItemSlot(slot, player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
+    }
+
     void CheckRetroActiveInventoryAppearances(Player* player)
     {
         if (!sT->GetUseCollectionSystem())
@@ -858,7 +869,9 @@ public:
         PLAYERHOOK_ON_PLAYER_COMPLETE_QUEST,
         PLAYERHOOK_ON_AFTER_SET_VISIBLE_ITEM_SLOT,
         PLAYERHOOK_ON_AFTER_MOVE_ITEM_FROM_INVENTORY,
+        PLAYERHOOK_ON_UNEQUIP_ITEM,
         PLAYERHOOK_ON_LOGIN,
+        PLAYERHOOK_ON_SAVE,
         PLAYERHOOK_ON_LOGOUT,
         PLAYERHOOK_ON_BEFORE_BUY_ITEM_FROM_VENDOR,
         PLAYERHOOK_CAN_SELL_ITEM
@@ -956,9 +969,19 @@ public:
         }
     }
 
-    void OnPlayerAfterMoveItemFromInventory(Player* /*player*/, Item* it, uint8 /*bag*/, uint8 /*slot*/, bool /*update*/) override
+    void OnPlayerAfterMoveItemFromInventory(Player* player, Item* it, uint8 bag, uint8 slot, bool /*update*/) override
     {
-        sT->DeleteFakeFromDB(it->GetGUID().GetCounter());
+        if (it)
+            sT->DeleteFakeFromDB(it->GetGUID().GetCounter());
+
+        // MoveItemFromInventory has already removed the old slot occupant.
+        if (player && bag == INVENTORY_SLOT_BAG_0 && slot < EQUIPMENT_SLOT_END)
+            player->SetVisibleItemSlot(slot, player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
+    }
+
+    void OnPlayerUnequip(Player* player, Item* /*it*/) override
+    {
+        RefreshVisibleEquipment(player);
     }
 
     void OnPlayerLogin(Player* player) override
@@ -984,18 +1007,19 @@ public:
                     sT->entryMap[playerGUID][itemGUID] = fakeEntry;
                 }
             } while (result->NextRow());
-
-            for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
-            {
-                if (Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-                    player->SetVisibleItemSlot(slot, item);
-            }
         }
+
+        RefreshVisibleEquipment(player);
 
 #ifdef PRESETS
         if (sT->GetEnableSets())
             sT->LoadPlayerSets(playerGUID);
 #endif
+    }
+
+    void OnPlayerSave(Player* player) override
+    {
+        RefreshVisibleEquipment(player);
     }
 
     void OnPlayerLogout(Player* player) override
