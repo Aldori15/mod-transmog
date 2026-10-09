@@ -693,7 +693,7 @@ private:
     // Prevent collecting vendor purchases before core sets the refundable flag.
     static inline thread_local ObjectGuid _purchasingPlayer;
 
-    void AddToDatabase(Player* player, Item* item, bool fromVendorSell = false)
+    void AddToDatabase(Player* player, Item* item, bool fromVendorSell = false, bool fromNewItem = false)
     {
         if (!item)
             return;
@@ -741,10 +741,36 @@ private:
             {
                 ItemBondingType bonding = static_cast<ItemBondingType>(itemTemplate->Bonding);
 
-                // BoE/BwU items must be equipped, used or vendor-claimed.
-                if (bonding == ItemBondingType::BIND_WHEN_EQUIPPED ||
-                    bonding == ItemBondingType::BIND_WHEN_USE)
-                    return;
+                bool isBoEOrBwU =
+                    bonding == ItemBondingType::BIND_WHEN_EQUIPPED ||
+                    bonding == ItemBondingType::BIND_WHEN_USE;
+
+                if (isBoEOrBwU)
+                {
+                    // Permit unbound grey BoE/BwU collection only for new items
+                    // when the optional pickup setting is enabled.
+                    if (!fromNewItem || itemTemplate->Quality != ITEM_QUALITY_POOR ||
+                        !sT->GetCollectPoorItemsOnPickup())
+                        return;
+
+                    // Do not bind an item that cannot be added to the collection.
+                    if (itemTemplate->Class != ITEM_CLASS_ARMOR && itemTemplate->Class != ITEM_CLASS_WEAPON)
+                        return;
+
+                    if (!sT->GetTrackUnusableItems() && !sT->SuitableForTransmogrification(player, itemTemplate))
+                        return;
+
+                    uint32 accountId = player->GetSession()->GetAccountId();
+                    auto accountIt = sT->collectionCache.find(accountId);
+
+                    // The appearance is already owned, so leave this copy unbound.
+                    if (accountIt != sT->collectionCache.end() && accountIt->second.contains(itemTemplate->ItemId))
+                        return;
+
+                    // Claim the new appearance by binding the physical item.
+                    item->SetBinding(true);
+                    item->SetState(ITEM_CHANGED, player);
+                }
             }
         }
 
@@ -851,7 +877,7 @@ public:
         if (!sT->GetUseCollectionSystem() || !item || player->GetGUID() == _purchasingPlayer)
             return;
 
-        AddToDatabase(player, item);
+        AddToDatabase(player, item, false, true);
     }
 
     void OnPlayerCreateItem(Player* player, Item* item, uint32 /*count*/) override
@@ -859,7 +885,7 @@ public:
         if (!sT->GetUseCollectionSystem() || !item || player->GetGUID() == _purchasingPlayer)
             return;
 
-        AddToDatabase(player, item);
+        AddToDatabase(player, item, false, true);
     }
 
     void OnPlayerBeforeStoreOrEquipNewItem(Player* player, uint32 /*vendorslot*/, uint32& /*item*/, uint8 /*count*/, uint8 /*bag*/, uint8 /*slot*/, ItemTemplate const* /*pProto*/, Creature* /*pVendor*/, VendorItem const* /*crItem*/, bool /*bStore*/) override
