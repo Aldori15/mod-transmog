@@ -293,6 +293,7 @@ public:
     
     bool TrackUnusableItems;
     bool CollectPoorItemsOnPickup;
+    bool CollectOnVendorSell;
     bool RetroActiveAppearances;
     bool ResetRetroActiveAppearances;
     bool ShowSetDisclaimer;
@@ -364,6 +365,7 @@ public:
     bool GetHiddenTransmogIsFree() const;
     bool GetTrackUnusableItems() const;
     bool GetCollectPoorItemsOnPickup() const;
+    bool GetCollectOnVendorSell() const;
     bool EnableRetroActiveAppearances() const;
     bool EnableResetRetroActiveAppearances() const;
     [[nodiscard]] bool IsEnabled() const;

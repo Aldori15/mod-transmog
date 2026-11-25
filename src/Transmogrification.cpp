@@ -1352,6 +1352,7 @@ void Transmogrification::LoadConfig(bool reload)
     HiddenTransmogIsFree = sConfigMgr->GetOption<bool>("Transmogrification.HiddenTransmogIsFree", true);
     TrackUnusableItems = sConfigMgr->GetOption<bool>("Transmogrification.TrackUnusableItems", true);
     CollectPoorItemsOnPickup = sConfigMgr->GetOption<bool>("Transmogrification.CollectPoorItemsOnPickup", false);
+    CollectOnVendorSell = sConfigMgr->GetOption<bool>("Transmogrification.CollectOnVendorSell", true);
     RetroActiveAppearances = sConfigMgr->GetOption<bool>("Transmogrification.RetroActiveAppearances", true);
     ResetRetroActiveAppearances = sConfigMgr->GetOption<bool>("Transmogrification.ResetRetroActiveAppearancesFlag", false);
 
@@ -1591,6 +1592,11 @@ bool Transmogrification::GetTrackUnusableItems() const
 bool Transmogrification::GetCollectPoorItemsOnPickup() const
 {
     return CollectPoorItemsOnPickup;
+}
+
+bool Transmogrification::GetCollectOnVendorSell() const
+{
+    return CollectOnVendorSell;
 }
 
 bool Transmogrification::EnableRetroActiveAppearances() const
